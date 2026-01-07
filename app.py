@@ -12,7 +12,7 @@ import requests
 from datetime import datetime
 import tensorflow as tf
 import matplotlib
-matplotlib.use('Agg') # GUI hatası almamak için
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, roc_curve, auc
@@ -24,9 +24,8 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 # 1. BAŞLANGIÇ AYARLARI
 # ============================================================
 print("\n" + "="*50)
-print(f"🔧 SİSTEM BAŞLATILIYOR (Hybrid Mode)...")
+print(f"🔧 SİSTEM BAŞLATILIYOR (Fixed Hybrid Mode)...")
 
-# Railway CPU olduğu için GPU'yu kapatalım (Hata önleyici)
 try:
     tf.config.set_visible_devices([], 'GPU')
 except: pass
@@ -49,17 +48,18 @@ os.makedirs(plots_dir, exist_ok=True)
 
 MODEL_PATH = os.path.join(MODELS_DIR, "cnn_fruit_best_model.h5")
 CLASSES_PATH = os.path.join(MODELS_DIR, "class_names.pkl")
-CACHE_PATH = os.path.join(MODELS_DIR, "evaluation_cache.pkl") # Hazır analiz dosyası
+CACHE_PATH = os.path.join(MODELS_DIR, "evaluation_cache.pkl")
 
-# GitHub URL'leri
-MODEL_URL = 'https://raw.githubusercontent.com/alifuatkurt55/fruit-cnn/main/models/cnn_fruit_best_model.h5'
+# --- KRİTİK DEĞİŞİKLİK ---
+# LFS dosyaları için 'raw' yerine 'media' subdomain'i kullanılır.
+# Bu link doğrudan 100MB'lık binary dosyayı verir.
+MODEL_URL = 'https://media.githubusercontent.com/media/alifuatkurt55/fruit-cnn/main/models/cnn_fruit_best_model.h5'
 CACHE_URL = 'https://raw.githubusercontent.com/alifuatkurt55/fruit-cnn/main/models/evaluation_cache.pkl'
 
 IMG_SIZE = 100
 global_model = None
 global_class_names = []
 
-# Analiz sonuçlarını tutacak değişken
 cached_results = {
     "y_true": None,
     "y_pred": None,
@@ -71,68 +71,83 @@ cached_results = {
 
 training_state = {
     "is_training": False,
-    "status": "Idle",
+    "status": "Disabled",
     "progress": 0,
-    "message": "Model eğitimi bekleniyor.",
+    "message": "Eğitim devre dışı.",
     "last_updated": None
 }
 
 # ============================================================
-# 3. YARDIMCI FONKSİYONLAR (İNDİRME VE YÜKLEME)
+# 3. YARDIMCI FONKSİYONLAR
 # ============================================================
-def download_file(filepath, url):
-    """Dosya yoksa veya boyutu çok küçükse indirir"""
-    if not os.path.exists(filepath) or os.path.getsize(filepath) < 1024:
-        print(f"📥 İndiriliyor: {filepath} ...")
-        try:
-            response = requests.get(url, stream=True)
-            if response.status_code == 200:
-                with open(filepath, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                print("✅ İndirme tamamlandı.")
-            else:
-                print(f"❌ İndirme başarısız. Kod: {response.status_code}")
-        except Exception as e:
-            print(f"❌ Hata: {e}")
+def download_file(filepath, url, description):
+    """Dosyayı indirir ve boyut kontrolü yapar"""
+    # Dosya var mı?
+    if os.path.exists(filepath):
+        # Eğer model dosyası 5MB'dan küçükse kesin yanlıştır (LFS pointer'dır), sil.
+        if "model.h5" in filepath and os.path.getsize(filepath) < 5 * 1024 * 1024:
+            print(f"⚠️ {description} boyutu çok küçük (Hatalı LFS dosyası). Siliniyor...")
+            os.remove(filepath)
+        else:
+            # Dosya sağlam görünüyor
+            return
+
+    print(f"📥 İndiriliyor: {filepath} ...")
+    try:
+        response = requests.get(url, stream=True)
+        if response.status_code == 200:
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            print(f"✅ {description} indirildi. Boyut: {os.path.getsize(filepath) // 1024} KB")
+        else:
+            print(f"❌ İndirme başarısız ({description}). Kod: {response.status_code}")
+    except Exception as e:
+        print(f"❌ İndirme hatası ({description}): {e}")
 
 def load_resources():
     global global_model, global_class_names, cached_results
     
-    # 1. Modeli Hazırla
-    download_file(MODEL_PATH, MODEL_URL)
+    # 1. Modeli İndir ve Yükle
+    download_file(MODEL_PATH, MODEL_URL, "Model Dosyası")
     
     if global_model is None:
-        try:
-            print("🧠 Model yükleniyor...")
-            # compile=False RAM kullanımını azaltır, tahmin için yeterlidir.
-            global_model = load_model(MODEL_PATH, compile=False) 
-            print("✅ Model Hazır.")
-        except Exception as e:
-            print(f"⚠️ Model yükleme hatası: {e}")
+        if os.path.exists(MODEL_PATH):
+            try:
+                print("🧠 Model hafızaya yükleniyor...")
+                global_model = load_model(MODEL_PATH, compile=False) 
+                print("✅ Model Hazır.")
+            except Exception as e:
+                print(f"🔥 Model bozuk veya okunamadı: {e}")
+                # Bozuk dosyayı sil ki sonraki sefer tekrar indirsin
+                try: os.remove(MODEL_PATH)
+                except: pass
+        else:
+            print("❌ Model dosyası bulunamadı.")
 
-    # 2. Sınıf İsimlerini Hazırla
+    # 2. Sınıf İsimlerini Yükle
     if os.path.exists(CLASSES_PATH):
         try:
             global_class_names = joblib.load(CLASSES_PATH)
         except: pass
 
-    # 3. Hazır Analiz Verilerini (Cache) Hazırla
-    download_file(CACHE_PATH, CACHE_URL)
+    # 3. Hazır Analiz Verilerini Yükle
+    download_file(CACHE_PATH, CACHE_URL, "Cache Dosyası")
     
+    # Cache yükleme mantığı (Hata düzeltildi)
     if cached_results["y_true"] is None and os.path.exists(CACHE_PATH):
         try:
             data = joblib.load(CACHE_PATH)
             cached_results.update(data)
             print("📊 Hazır analiz verileri yüklendi.")
             
-            # Eğer sınıf isimleri pkl dosyasından gelmediyse buradan al
-            if not global_class_names:
+            # NumPy array hatasını önlemek için len() kontrolü
+            if len(global_class_names) == 0:
                 global_class_names = data.get("class_names", [])
         except Exception as e:
             print(f"⚠️ Cache okuma hatası: {e}")
 
-# Uygulama başlarken kaynakları yükle
+# Başlangıçta yükle
 load_resources()
 
 # ============================================================
@@ -140,15 +155,15 @@ load_resources()
 # ============================================================
 @app.route('/')
 def index():
-    return "Meyve AI Sunucusu Aktif"
+    status = "Aktif" if global_model else "Model Yüklenemedi"
+    return f"Meyve AI Sunucusu: {status}"
 
 @app.route("/predict", methods=["POST"])
 def predict_single_image():
-    # --- BURASI ESKİ KODUNUZLA AYNI MANTIKTA ---
     if global_model is None: 
         load_resources()
         if global_model is None:
-            return jsonify({"error": "Model yüklenemedi."}), 500
+            return jsonify({"error": "Sunucu Hatası: Model yüklenemedi."}), 500
     
     if 'file' not in request.files: return jsonify({"error": "Dosya yok."}), 400
     
@@ -156,6 +171,9 @@ def predict_single_image():
     try:
         file_bytes = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        
+        if img is None: return jsonify({"error": "Resim okunamadı."}), 400
+
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
         img = img.astype("float32") / 255.0
@@ -170,31 +188,29 @@ def predict_single_image():
         else:
             pred_class = f"Class {pred_idx}"
         
-        # RAM temizliği
         del img, probs
         gc.collect()
 
         return jsonify({"class": pred_class, "confidence": f"%{confidence * 100:.2f}"})
     except Exception as e:
+        print(f"Predict Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/evaluate")
 def evaluate():
-    # --- BURASI DEĞİŞTİ: ARTIK HESAPLAMA YAPMIYOR, HAZIR VERİYİ VERİYOR ---
     if cached_results["y_true"] is None:
         load_resources()
         if cached_results["y_true"] is None:
-             return jsonify({"error": "Hazır test verisi (cache) bulunamadı."}), 500
+             return jsonify({"error": "Hazır test verisi bulunamadı."}), 500
 
     return jsonify({
         "accuracy": f"{cached_results['accuracy'] * 100:.2f}%",
-        "model_type": "CNN (Offline)",
+        "model_type": "CNN (Offline Cache)",
         "class_report": cached_results['report']
     })
 
 @app.route("/get-plot/<plot_type>")
 def get_plot(plot_type):
-    # Hazır veriyi kullanarak grafik çiz (Hızlı)
     if cached_results["y_true"] is None:
         load_resources()
         if cached_results["y_true"] is None:
@@ -257,10 +273,10 @@ def get_plot(plot_type):
 def serve_static(filename):
     return send_from_directory(STATIC_DIR, filename)
 
-# Eğitim endpointleri (Gereksiz ama hata vermemesi için boş bırakıldı)
+# Eğitim endpointleri (Boş)
 @app.route("/train", methods=["GET", "POST"])
 def trigger_training():
-    return jsonify({"status": "error", "message": "Railway üzerinde eğitim devre dışı bırakıldı."})
+    return jsonify({"status": "error", "message": "Devre dışı."})
 
 @app.route("/train-status")
 def get_training_status():
