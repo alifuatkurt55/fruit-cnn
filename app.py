@@ -16,7 +16,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, roc_curve, auc
-from sklearn.preprocessing import LabelBinarizer, label_binarize
+# label_binarize sildik, manuel yapacağız
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
@@ -24,7 +24,7 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 # 1. BAŞLANGIÇ AYARLARI
 # ============================================================
 print("\n" + "="*50)
-print(f"🔧 SİSTEM BAŞLATILIYOR (Fixed Hybrid Mode)...")
+print(f"🔧 SİSTEM BAŞLATILIYOR (Final Hybrid Mode)...")
 
 try:
     tf.config.set_visible_devices([], 'GPU')
@@ -50,9 +50,7 @@ MODEL_PATH = os.path.join(MODELS_DIR, "cnn_fruit_best_model.h5")
 CLASSES_PATH = os.path.join(MODELS_DIR, "class_names.pkl")
 CACHE_PATH = os.path.join(MODELS_DIR, "evaluation_cache.pkl")
 
-# --- KRİTİK DEĞİŞİKLİK ---
-# LFS dosyaları için 'raw' yerine 'media' subdomain'i kullanılır.
-# Bu link doğrudan 100MB'lık binary dosyayı verir.
+# LFS için 'media' subdomain kullanımı (Önemli!)
 MODEL_URL = 'https://media.githubusercontent.com/media/alifuatkurt55/fruit-cnn/main/models/cnn_fruit_best_model.h5'
 CACHE_URL = 'https://raw.githubusercontent.com/alifuatkurt55/fruit-cnn/main/models/evaluation_cache.pkl'
 
@@ -71,9 +69,9 @@ cached_results = {
 
 training_state = {
     "is_training": False,
-    "status": "Disabled",
+    "status": "Idle",
     "progress": 0,
-    "message": "Eğitim devre dışı.",
+    "message": "Hazır.",
     "last_updated": None
 }
 
@@ -81,16 +79,13 @@ training_state = {
 # 3. YARDIMCI FONKSİYONLAR
 # ============================================================
 def download_file(filepath, url, description):
-    """Dosyayı indirir ve boyut kontrolü yapar"""
-    # Dosya var mı?
     if os.path.exists(filepath):
-        # Eğer model dosyası 5MB'dan küçükse kesin yanlıştır (LFS pointer'dır), sil.
+        # Model dosyası çok küçükse (LFS hatası) sil
         if "model.h5" in filepath and os.path.getsize(filepath) < 5 * 1024 * 1024:
-            print(f"⚠️ {description} boyutu çok küçük (Hatalı LFS dosyası). Siliniyor...")
+            print(f"⚠️ {description} boyutu hatalı, siliniyor...")
             os.remove(filepath)
         else:
-            # Dosya sağlam görünüyor
-            return
+            return # Dosya sağlam
 
     print(f"📥 İndiriliyor: {filepath} ...")
     try:
@@ -99,55 +94,43 @@ def download_file(filepath, url, description):
             with open(filepath, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-            print(f"✅ {description} indirildi. Boyut: {os.path.getsize(filepath) // 1024} KB")
+            print("✅ İndirme tamamlandı.")
         else:
-            print(f"❌ İndirme başarısız ({description}). Kod: {response.status_code}")
+            print(f"❌ İndirme başarısız: {response.status_code}")
     except Exception as e:
-        print(f"❌ İndirme hatası ({description}): {e}")
+        print(f"❌ Hata: {e}")
 
 def load_resources():
     global global_model, global_class_names, cached_results
     
-    # 1. Modeli İndir ve Yükle
-    download_file(MODEL_PATH, MODEL_URL, "Model Dosyası")
+    download_file(MODEL_PATH, MODEL_URL, "Model")
     
-    if global_model is None:
-        if os.path.exists(MODEL_PATH):
-            try:
-                print("🧠 Model hafızaya yükleniyor...")
-                global_model = load_model(MODEL_PATH, compile=False) 
-                print("✅ Model Hazır.")
-            except Exception as e:
-                print(f"🔥 Model bozuk veya okunamadı: {e}")
-                # Bozuk dosyayı sil ki sonraki sefer tekrar indirsin
-                try: os.remove(MODEL_PATH)
-                except: pass
-        else:
-            print("❌ Model dosyası bulunamadı.")
-
-    # 2. Sınıf İsimlerini Yükle
-    if os.path.exists(CLASSES_PATH):
+    if global_model is None and os.path.exists(MODEL_PATH):
         try:
-            global_class_names = joblib.load(CLASSES_PATH)
+            print("🧠 Model yükleniyor...")
+            global_model = load_model(MODEL_PATH, compile=False) 
+            print("✅ Model Hazır.")
+        except Exception as e:
+            print(f"⚠️ Model hatası: {e}")
+            try: os.remove(MODEL_PATH) 
+            except: pass
+
+    if os.path.exists(CLASSES_PATH):
+        try: global_class_names = joblib.load(CLASSES_PATH)
         except: pass
 
-    # 3. Hazır Analiz Verilerini Yükle
-    download_file(CACHE_PATH, CACHE_URL, "Cache Dosyası")
+    download_file(CACHE_PATH, CACHE_URL, "Cache")
     
-    # Cache yükleme mantığı (Hata düzeltildi)
     if cached_results["y_true"] is None and os.path.exists(CACHE_PATH):
         try:
             data = joblib.load(CACHE_PATH)
             cached_results.update(data)
-            print("📊 Hazır analiz verileri yüklendi.")
-            
-            # NumPy array hatasını önlemek için len() kontrolü
-            if len(global_class_names) == 0:
+            print("📊 Analiz verileri yüklendi.")
+            if not global_class_names:
                 global_class_names = data.get("class_names", [])
         except Exception as e:
-            print(f"⚠️ Cache okuma hatası: {e}")
+            print(f"⚠️ Cache hatası: {e}")
 
-# Başlangıçta yükle
 load_resources()
 
 # ============================================================
@@ -155,15 +138,14 @@ load_resources()
 # ============================================================
 @app.route('/')
 def index():
-    status = "Aktif" if global_model else "Model Yüklenemedi"
-    return f"Meyve AI Sunucusu: {status}"
+    return "Meyve AI Backend"
 
 @app.route("/predict", methods=["POST"])
 def predict_single_image():
     if global_model is None: 
         load_resources()
         if global_model is None:
-            return jsonify({"error": "Sunucu Hatası: Model yüklenemedi."}), 500
+            return jsonify({"error": "Model yüklenemedi."}), 500
     
     if 'file' not in request.files: return jsonify({"error": "Dosya yok."}), 400
     
@@ -171,9 +153,6 @@ def predict_single_image():
     try:
         file_bytes = np.frombuffer(file.read(), np.uint8)
         img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        
-        if img is None: return jsonify({"error": "Resim okunamadı."}), 400
-
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
         img = img.astype("float32") / 255.0
@@ -193,7 +172,6 @@ def predict_single_image():
 
         return jsonify({"class": pred_class, "confidence": f"%{confidence * 100:.2f}"})
     except Exception as e:
-        print(f"Predict Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/evaluate")
@@ -201,17 +179,17 @@ def evaluate():
     if cached_results["y_true"] is None:
         load_resources()
         if cached_results["y_true"] is None:
-             return jsonify({"error": "Hazır test verisi bulunamadı."}), 500
+             return jsonify({"error": "Analiz verisi yok."}), 500
 
     return jsonify({
         "accuracy": f"{cached_results['accuracy'] * 100:.2f}%",
-        "model_type": "CNN (Offline Cache)",
+        "model_type": "CNN (Offline)",
         "class_report": cached_results['report']
     })
 
 @app.route("/get-plot/<plot_type>")
 def get_plot(plot_type):
-    # Hazır veriyi kullanarak grafik çiz (Hızlı)
+    # Veri kontrolü
     if cached_results["y_true"] is None:
         load_resources()
         if cached_results["y_true"] is None:
@@ -220,9 +198,9 @@ def get_plot(plot_type):
     filename = f"{plot_type}.png"
     save_path = os.path.join(plots_dir, filename)
     
-    y_true = cached_results["y_true"]
-    y_pred = cached_results["y_pred"]
-    y_probs = cached_results["y_probs"]
+    y_true = np.array(cached_results["y_true"])
+    y_pred = np.array(cached_results["y_pred"])
+    y_probs = np.array(cached_results["y_probs"])
     class_names = cached_results["class_names"]
 
     try:
@@ -233,8 +211,7 @@ def get_plot(plot_type):
             if plot_type == "confusion_matrix":
                 cm = confusion_matrix(y_true, y_pred)
                 unique_indices = sorted(list(set(y_true) | set(y_pred)))
-                labels = [class_names[i] if i < len(class_names) else f"Class {i}" for i in unique_indices]
-                
+                labels = [class_names[i] if i < len(class_names) else f"{i}" for i in unique_indices]
                 sns.heatmap(cm, cmap="Blues", annot=True, fmt="d", xticklabels=labels, yticklabels=labels, ax=ax)
                 ax.set_title("Confusion Matrix")
                 ax.set_xticklabels(labels, rotation=45, ha='right')
@@ -245,58 +222,55 @@ def get_plot(plot_type):
                 top_k = min(10, len(wrong_preds))
                 if top_k > 0:
                     top_idx = np.argsort(wrong_preds)[-top_k:][::-1]
-                    
-                    top_names = []
-                    top_vals = []
-                    for i in top_idx:
-                        name = class_names[i] if i < len(class_names) else f"Class {i}"
-                        top_names.append(name)
-                        top_vals.append(wrong_preds[i])
-
+                    top_names = [class_names[i] if i < len(class_names) else f"{i}" for i in top_idx]
+                    top_vals = [wrong_preds[i] for i in top_idx]
                     ax.bar(top_names, top_vals, color="salmon")
                     ax.set_xticklabels(top_names, rotation=45, ha='right')
-                    ax.set_title("En Çok Hata Yapılanlar")
+                    ax.set_title("Hatalı Tahminler")
                 else:
-                    ax.text(0.5, 0.5, "Hata Yok! (Mükemmel Sonuç)", ha='center')
+                    ax.text(0.5, 0.5, "Hata Yok", ha='center')
                 
             elif plot_type == "roc_curve":
-                # --- DÜZELTİLEN KISIM BAŞLANGICI ---
+                # --- YENİ GARANTİLİ ROC MANTIĞI ---
                 if y_probs is None:
-                    ax.text(0.5, 0.5, "Olasılık verisi (y_probs) yok", ha='center')
+                    ax.text(0.5, 0.5, "Olasılık verisi yok", ha='center')
                 else:
-                    n_classes = y_probs.shape[1]
-                    # Test setindeki mevcut sınıfları bul (Örn: Sadece Elma ve Muz varsa onları al)
-                    present_classes = np.unique(y_true)
-                    
-                    # Binarize işlemini tüm sınıflar için yap
-                    y_test_bin = label_binarize(y_true, classes=range(n_classes))
-                    
-                    # Eğer sadece 2 sınıf varsa (Binary Classification), shape düzeltmesi
-                    if n_classes == 2 and y_test_bin.shape[1] == 1:
-                        y_test_bin = np.hstack((1 - y_test_bin, y_test_bin))
-
+                    # Modelin çıktı sayısı (sütun sayısı)
+                    n_classes = y_probs.shape[1] 
                     lines_drawn = 0
-                    
-                    # Sadece elimizdeki test verisinde bulunan meyveleri çiz (Limiti kaldırdık)
-                    for i in present_classes:
-                        # Eğer bu sınıf modelin bildiği sınıf sınırları içindeyse
-                        if i < n_classes:
-                            # ROC hesapla
-                            fpr, tpr, _ = roc_curve(y_test_bin[:, i], y_probs[:, i])
-                            roc_auc = auc(fpr, tpr)
+
+                    # Test setinde gerçekten var olan sınıfları bul
+                    unique_true_classes = np.unique(y_true)
+
+                    for i in range(n_classes):
+                        # Sadece test setimizde bu meyveden varsa çizelim
+                        # Yoksa hesaplayacak bir "doğru" değer yoktur.
+                        if i in unique_true_classes:
+                            # Manuel Binary Yapıyoruz:
+                            # Bu meyve ise 1, değilse 0
+                            binary_labels = (y_true == i).astype(int)
                             
-                            label = class_names[i] if i < len(class_names) else f"Class {i}"
-                            ax.plot(fpr, tpr, lw=2, label=f'{label} (AUC={roc_auc:.2f})')
-                            lines_drawn += 1
-                    
+                            # Bu meyvenin olasılıkları
+                            prob_scores = y_probs[:, i]
+
+                            # Çiz
+                            try:
+                                fpr, tpr, _ = roc_curve(binary_labels, prob_scores)
+                                roc_auc = auc(fpr, tpr)
+                                
+                                label_name = class_names[i] if i < len(class_names) else f"Class {i}"
+                                ax.plot(fpr, tpr, lw=2, label=f'{label_name} ({roc_auc:.2f})')
+                                lines_drawn += 1
+                            except:
+                                pass # Hesaplama hatası olursa geç
+
                     if lines_drawn > 0:
                         ax.plot([0, 1], [0, 1], 'k--')
-                        # Legend çok kalabalık olmasın diye fontu küçült
                         ax.legend(loc="lower right", fontsize='small')
-                        ax.set_title(f"ROC Curve ({lines_drawn} Sınıf)")
+                        ax.set_title(f"ROC Curve ({lines_drawn} Meyve)")
                     else:
-                        ax.text(0.5, 0.5, "Çizilecek sınıf bulunamadı", ha='center')
-                # --- DÜZELTİLEN KISIM BİTİŞİ ---
+                        ax.text(0.5, 0.5, "Grafik Çizilemedi (Tek Tip Veri)", ha='center')
+                # -----------------------------------
 
             plt.tight_layout()
             fig.savefig(save_path)
@@ -306,17 +280,13 @@ def get_plot(plot_type):
         return send_from_directory(plots_dir, filename)
 
     except Exception as e:
-        # Hata detayını terminale yazdır ki Railway loglarında görelim
-        print(f"GRAFİK HATASI ({plot_type}): {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": f"Grafik oluşturulamadı: {e}"}), 500
+        print(f"Grafik Hatası: {e}")
+        return jsonify({"error": f"{e}"}), 500
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     return send_from_directory(STATIC_DIR, filename)
 
-# Eğitim endpointleri (Boş)
 @app.route("/train", methods=["GET", "POST"])
 def trigger_training():
     return jsonify({"status": "error", "message": "Devre dışı."})
