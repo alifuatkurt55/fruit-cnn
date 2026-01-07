@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fruit Classification AI</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 40px; background-color: #f4f7f6; color: #333; }
+        h1 { color: #2c3e50; text-align: center; margin-bottom: 40px; }
+        
+        /* Butonlar */
+        .controls { text-align: center; margin-bottom: 30px; }
+        button { 
+            padding: 12px 24px; margin: 0 10px; font-size: 16px; cursor: pointer; 
+            border: none; border-radius: 6px; color: white; transition: background 0.3s; 
+        }
+        .btn-eval { background-color: #3498db; }
+        .btn-eval:hover { background-color: #2980b9; }
+        .btn-train { background-color: #e67e22; }
+        .btn-train:hover { background-color: #d35400; }
+        .btn-disabled { background-color: #bdc3c7; cursor: not-allowed; }
+
+        /* Sonuç Bölümleri */
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); display: none; }
+        .section { margin-bottom: 40px; }
+        h2, h3 { color: #34495e; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px; }
+        
+        /* Görseller */
+        img { max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); display: block; margin: 20px auto; }
+        
+        /* Tablo */
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ecf0f1; padding: 10px; text-align: center; font-size: 14px; }
+        th { background-color: #3498db; color: white; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+
+        /* Loading & Training Overlay */
+        #overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); backdrop-filter: blur(5px); z-index: 9999; justify-content: center; align-items: center; flex-direction: column; color: white; }
+        .progress-box { width: 400px; background: white; padding: 30px; border-radius: 10px; text-align: center; color: #333; }
+        .progress-bar-container { width: 100%; height: 20px; background: #eee; margin-top: 20px; border-radius: 10px; overflow: hidden; }
+        .progress-bar { width: 0%; height: 100%; background: #2ecc71; transition: width 0.5s; }
+        .status-text { margin-top: 15px; font-weight: bold; font-size: 14px; color: #555; }
+    </style>
+</head>
+<body>
+
+    <h1>🍎 Fruit Classification AI Dashboard</h1>
+
+    <div class="controls">
+        <button onclick="startEvaluation()" class="btn-eval" id="btnEval">🧪 Modeli Test Et (Evaluate)</button>
+        <button onclick="startTraining()" class="btn-train" id="btnTrain">⚙️ Modeli Yeniden Eğit (Train)</button>
+    </div>
+
+    <div id="overlay">
+        <div class="progress-box">
+            <h3 id="overlayTitle">İşlem Yapılıyor...</h3>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <p class="status-text" id="statusText">Lütfen bekleyiniz...</p>
+        </div>
+    </div>
+
+    <div class="container" id="resultsContainer">
+        
+        <div class="section">
+            <h2 id="accuracyTitle">Genel Doğruluk: %0.00</h2>
+            <p>Model Tipi: <span id="modelType" style="font-weight:bold; color:#e67e22;">-</span></p>
+        </div>
+
+        <div class="section" id="trainingSection">
+            <h3>📈 Eğitim Performansı (Accuracy & Loss)</h3>
+            <img id="trainingImage" src="" alt="Henüz eğitim yapılmadı veya grafik bulunamadı.">
+        </div>
+
+        <div class="section">
+            <h3>📊 Confusion Matrix</h3>
+            <img id="cmImage" src="" alt="Confusion Matrix yükleniyor...">
+        </div>
+
+        <div class="section">
+            <h3>🎯 ROC Eğrisi (Multi-Class)</h3>
+            <img id="rocImage" src="" alt="ROC eğrisi yükleniyor...">
+        </div>
+
+        <div class="section">
+            <h3>⚠️ En Çok Karıştırılanlar</h3>
+            <img id="wrongImage" src="" alt="Hatalı tahmin grafiği yükleniyor...">
+        </div>
+
+        <div class="section">
+            <h3>📋 Detaylı Sınıf Raporu</h3>
+            <table id="reportTable">
+                <thead>
+                    <tr>
+                        <th>Sınıf</th>
+                        <th>Precision</th>
+                        <th>Recall</th>
+                        <th>F1-Score</th>
+                        <th>Support</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const overlay = document.getElementById('overlay');
+        const progressBar = document.getElementById('progressBar');
+        const statusText = document.getElementById('statusText');
+        const overlayTitle = document.getElementById('overlayTitle');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const btnEval = document.getElementById('btnEval');
+        const btnTrain = document.getElementById('btnTrain');
+
+        // ==========================================
+        // 1. EVALUATE (TEST ET) FONKSİYONU
+        // ==========================================
+        async function startEvaluation() {
+            // UI Sıfırla
+            overlay.style.display = 'flex';
+            overlayTitle.innerText = "Model Değerlendiriliyor";
+            statusText.innerText = "Test verisi işleniyor, lütfen bekleyiniz...";
+            progressBar.style.width = "100%"; // Evaluate için sabit loading
+            progressBar.style.animation = "pulse 1s infinite"; 
+
+            try {
+                const response = await fetch('/evaluate');
+                const data = await response.json();
+
+                if (data.error) {
+                    alert("Hata: " + data.error);
+                    overlay.style.display = 'none';
+                    return;
+                }
+
+                // Verileri Yerleştir
+                document.getElementById('accuracyTitle').innerText = "Genel Doğruluk: " + data.accuracy;
+                document.getElementById('modelType').innerText = data.model_type || "Bilinmiyor";
+                
+                // Cache engellemek için timestamp ekliyoruz (?t=...)
+                const timestamp = new Date().getTime();
+                
+                // Mevcut Grafikler
+                document.getElementById('cmImage').src = `/static/${data.confusion_matrix}?t=${timestamp}`;
+                document.getElementById('wrongImage').src = `/static/${data.top10_wrong}?t=${timestamp}`;
+
+                // YENİ GRAFİKLERİ YERLEŞTİR
+                if (data.training_curve) {
+                    document.getElementById('trainingImage').src = `/static/${data.training_curve}?t=${timestamp}`;
+                    document.getElementById('trainingSection').style.display = 'block';
+                } else {
+                    document.getElementById('trainingSection').style.display = 'none';
+                }
+
+                if (data.roc_curve) {
+                    document.getElementById('rocImage').src = `/static/${data.roc_curve}?t=${timestamp}`;
+                }
+
+                // Tabloyu Doldur
+                const tbody = document.querySelector("#reportTable tbody");
+                tbody.innerHTML = ""; // Temizle
+
+                for (const [key, value] of Object.entries(data.class_report)) {
+                    if (key !== 'accuracy' && key !== 'macro avg' && key !== 'weighted avg') {
+                        const row = `<tr>
+                            <td>${key}</td>
+                            <td>${value.precision.toFixed(2)}</td>
+                            <td>${value.recall.toFixed(2)}</td>
+                            <td>${value["f1-score"].toFixed(2)}</td>
+                            <td>${value.support}</td>
+                        </tr>`;
+                        tbody.innerHTML += row;
+                    }
+                }
+
+                resultsContainer.style.display = 'block';
+
+            } catch (err) {
+                console.error(err);
+                alert("Sunucuyla iletişim hatası!");
+            } finally {
+                overlay.style.display = 'none';
+            }
+        }
+
+        // ==========================================
+        // 2. TRAIN (EĞİTİM) FONKSİYONU
+        // ==========================================
+        async function startTraining() {
+            if(!confirm("Model eğitimi uzun sürebilir. Başlatmak istiyor musunuz?")) return;
+
+            // UI Hazırla
+            overlay.style.display = 'flex';
+            overlayTitle.innerText = "Model Eğitiliyor (Arka Plan)";
+            progressBar.style.width = "0%";
+            btnTrain.classList.add("btn-disabled");
+            btnTrain.disabled = true;
+
+            try {
+                // Eğitimi Tetikle
+                const startRes = await fetch('/train');
+                const startData = await startRes.json();
+                
+                if (startData.status === "error") {
+                    alert(startData.message);
+                    resetTrainingUI();
+                    return;
+                }
+
+                // Polling Başlat (Her 1 saniyede bir durumu sor)
+                const pollInterval = setInterval(async () => {
+                    const statusRes = await fetch('/train-status');
+                    const statusData = await statusRes.json();
+
+                    statusText.innerText = statusData.message;
+
+                    // Progress Bar Hesaplama (Basit mantık: 25 Epoch varsa)
+                    let percent = 0;
+                    if (statusData.status === "Loading Data") percent = 10;
+                    else if (statusData.status === "Training") {
+                        // 25 Epoch varsayımıyla
+                        percent = 10 + (statusData.progress / 25 * 90); 
+                    } else if (statusData.status === "Completed") {
+                        percent = 100;
+                    }
+
+                    if (percent > 100) percent = 100;
+                    progressBar.style.width = percent + "%";
+
+                    // Bitiş Kontrolü
+                    if (statusData.status === "Completed") {
+                        clearInterval(pollInterval);
+                        alert("Eğitim Tamamlandı! Yeni model yüklendi. Test etmek için 'Modeli Test Et' butonuna basabilirsiniz.");
+                        resetTrainingUI();
+                        
+                        // --- DEĞİŞİKLİK BURADA: startEvaluation() KODUNU SİLDİK ---
+                        // Artık otomatik test başlamayacak.
+                        
+                    } else if (statusData.status === "Error") {
+                        clearInterval(pollInterval);
+                        alert("Eğitim Hatası: " + statusData.message);
+                        resetTrainingUI();
+                    }
+
+                }, 1000);
+
+            } catch (err) {
+                console.error(err);
+                alert("Eğitim başlatılamadı.");
+                resetTrainingUI();
+            }
+        }
+
+        function resetTrainingUI() {
+            overlay.style.display = 'none';
+            btnTrain.classList.remove("btn-disabled");
+            btnTrain.disabled = false;
+        }
+
+    </script>
+</body>
+</html>
